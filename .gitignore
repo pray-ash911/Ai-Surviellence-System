@@ -1,2 +1,8 @@
-.venv/ 
-models/ 
+venv/
+.venv/
+models/
+snapshots/
+*.pyc
+**/__pycache__/
+.idea/
+.vscode/

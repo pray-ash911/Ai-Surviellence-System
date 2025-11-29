@@ -6,7 +6,8 @@ import sys
 
 def main():
     """Run administrative tasks."""
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
+    # The fix is here: 'SecurityProject.settings' MUST be changed to 'backend.core.settings'
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.core.settings')
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:

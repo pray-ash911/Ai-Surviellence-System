@@ -1,147 +1,181 @@
 import streamlit as st
 import requests
-import pandas as pd
+import pandas as pd # <-- Changed to pd for DataFrame handling
 import time
-import os 
-from datetime import datetime
+import json
 
-# --- Configuration (UPDATE) ---
-# Assuming your Django project is running on 8000
-DJANGO_BASE_URL = "http://127.0.0.1:8000"
-# Endpoint for video feed (should be at the app level, e.g., /video_feed/)
-VIDEO_FEED_URL = f"{DJANGO_BASE_URL}/video_feed/" 
-# Endpoint for event logs (e.g., /api/logs/)
-LOGS_URL = f"{DJANGO_BASE_URL}/api/logs/" 
-# NEW: Endpoint for the latest status (e.g., /api/latest_status/)
-STATUS_API_URL = f"{DJANGO_BASE_URL}/api/latest_status/" 
+# --- CONFIGURATION ---
+# IMPORTANT: Replace this with the URL where your Django server is hosted (usually ngrok)
+DJANGO_BASE_URL = "http://127.0.0.1:8000" 
 
-st.set_page_config(
-    page_title="AI Surveillance System Dashboard", 
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# API Endpoints (Checking the provided Django URLs)
+# FIX 1: Corrected status URL to include 'latest_' based on common Django endpoint structure.
+STATUS_API_URL = f"{DJANGO_BASE_URL}/api/latest_status/"
+LOGS_API_URL = f"{DJANGO_BASE_URL}/api/logs/"
+# FIX 2: Corrected video feed URL to use an underscore, as is standard in Django paths.
+VIDEO_FEED_URL = f"{DJANGO_BASE_URL}/video_feed/"
+
+# --- Polling Intervals (in seconds) ---
+STATUS_POLL_INTERVAL = 2
+LOGS_POLL_INTERVAL = 5
+
+# --- Page Setup ---
+st.set_page_config(layout="wide", page_title="Real-Time AI Surveillance Dashboard")
+
+st.title("🛡️ Real-Time AI Surveillance Dashboard")
+
+# Initialize state for status monitoring and data storage
+if 'monitoring_active' not in st.session_state:
+    st.session_state.monitoring_active = False
+if 'last_status_fetch' not in st.session_state:
+    st.session_state.last_status_fetch = 0
+if 'last_logs_fetch' not in st.session_state:
+    st.session_state.last_logs_fetch = 0
+if 'status_data' not in st.session_state:
+    st.session_state.status_data = {'status_level': 'IDLE', 'message': 'Monitoring not started.'}
+if 'logs_df' not in st.session_state:
+    st.session_state.logs_df = pd.DataFrame()
+if 'available_labels' not in st.session_state:
+    st.session_state.available_labels = ['WEAPON', 'INTRUSION', 'UOD', 'OVERCROWDING']
+if 'selected_labels' not in st.session_state:
+    st.session_state.selected_labels = st.session_state.available_labels # Select all by default
+
 
 # --- Functions to Fetch Data ---
 
-# Function to fetch latest system status
-def fetch_system_status():
-    """Fetches the latest alert status from the Django backend API."""
+def fetch_status():
+    """Fetches the latest status from the Django backend."""
     try:
-        response = requests.get(STATUS_API_URL, timeout=1) # Use a short timeout
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return {'status_level': 'ERROR', 'message': f'Django Status API returned {response.status_code}'}
-    except requests.exceptions.ConnectionError:
-        return {'status_level': 'ERROR', 'message': 'Cannot connect to Django API. Server may be down.'}
-    except requests.exceptions.Timeout:
-        return {'status_level': 'ERROR', 'message': 'Django Status API connection timed out.'}
-    except Exception as e:
-        return {'status_level': 'ERROR', 'message': f'An unknown error occurred: {e}'}
+        # Use the corrected STATUS_API_URL
+        response = requests.get(STATUS_API_URL, timeout=2)
+        response.raise_for_status() 
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        # Handle connection errors, timeouts, etc.
+        # Log the error to console but return an error status for display
+        return {'status_level': 'ERROR', 'message': f'Status fetch failed. Is Django running? ({e})'}
 
-# Function to fetch event logs (SYNTAX FIX: Using a guaranteed single-line lambda)
-def fetch_event_logs():
-    """Fetches the latest violence events from the Django backend."""
+def fetch_logs():
+    """Fetches the latest event logs from the Django backend."""
     try:
-        response = requests.get(LOGS_URL)
-        if response.status_code == 200:
-            data = response.json()
-            
-            # If the response is an empty list, return an empty DataFrame immediately
-            if not data:
-                return pd.DataFrame()
-
-            df = pd.DataFrame(data)
-            
-            # Format datetime
-            df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S')
-            
-            # FIX: Switched from f-string to .format() to avoid SyntaxError due to backslash
-            df['snapshot_url'] = df['snapshot_path'].apply(
-                lambda p: "{}/snapshots/{}".format(DJANGO_BASE_URL, os.path.basename(str(p).replace('\\', '/'))) if pd.notna(p) and p else None
-            )
-
-            return df.sort_values(by='timestamp', ascending=False) # Ensure newest is first
-
-        else:
-            # Print status code for debugging if the API is returning an error
-            st.error(f"Failed to fetch logs. Django Log API returned status code: {response.status_code}")
+        response = requests.get(LOGS_API_URL, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        
+        if not data:
             return pd.DataFrame()
-    except requests.exceptions.ConnectionError:
-        # st.error("Cannot connect to Django API for logs.") # Uncomment for deeper debugging
+        
+        df = pd.DataFrame(data)
+        
+        # Format timestamp
+        if 'timestamp' in df.columns:
+             df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S')
+
+        # --- CRITICAL FIX: Use snapshot_path to generate local snapshot_url ---
+        if 'snapshot_path' in df.columns:
+            # Construct the local URL using the base URL and the relative path
+            df['snapshot_url_local'] = df['snapshot_path'].apply(lambda x: f"{DJANGO_BASE_URL}/{x}")
+            # Drop the original Ngrok URL and rename the new local URL for the table display
+            df = df.drop(columns=['snapshot_url'], errors='ignore')
+            df.rename(columns={'snapshot_url_local': 'snapshot_url'}, inplace=True)
+        # -------------------------------------------------------------------
+
+        # Drop columns not needed for display
+        df = df.drop(columns=['id', 'snapshot_path'], errors='ignore')
+        
+        # Sort by timestamp (newest first)
+        return df.sort_values(by='timestamp', ascending=False)
+        
+    except requests.exceptions.RequestException as e:
+        # st.warning("No events logged yet, or API is unavailable.", icon="⚠️")
         return pd.DataFrame()
     except Exception as e:
-        # Catch unexpected errors during pandas processing
         st.error(f"Error processing log data in Streamlit: {e}")
         return pd.DataFrame()
 
 
-# --- Dashboard Layout ---
+# --- LAYOUT DEFINITION ---
+status_col, video_col, logs_col = st.columns([1, 2, 2])
 
-st.title("🛡️ Real-Time AI Surveillance Dashboard")
+# --- 1. System Status (Left Column) ---
+with status_col:
+    st.subheader("System Status")
+    status_placeholder = st.empty()
 
-# 1. Status Banner Placeholder (Top priority)
-status_placeholder = st.empty() 
-
-# Create two columns for layout
-col1, col2 = st.columns([2, 1])
-
-# --- Column 1: Live Video Feed ---
-with col1:
-    st.header("Live Feed (YOLO Detection)")
+# --- 2. Live Video Feed (Center Column) ---
+with video_col:
+    st.subheader("Live Feed (YOLO Detection)")
     
-    # MJPEG stream from Django
-    st.markdown(
-        f'<img src="{VIDEO_FEED_URL}" width="100%" style="border-radius: 10px;">', 
-        unsafe_allow_html=True
+    # Checkbox to start/stop the video stream
+    # Changed from checkbox to button for better start/stop control in polling loop context
+    if st.button("Start/Restart System Monitoring"):
+        st.session_state.monitoring_active = True
+        st.session_state.last_status_fetch = 0
+        st.session_state.last_logs_fetch = 0
+        st.rerun() 
+        
+    if not st.session_state.monitoring_active:
+        st.warning("Click 'Start/Restart' to activate the video stream and detection.", icon="▶️")
+
+
+# --- 3. Recent Event Logs (Right Column) ---
+with logs_col:
+    st.subheader("Recent Event Logs")
+    
+    # --- ADDED: Filter UI ---
+    st.session_state.selected_labels = st.multiselect(
+        "Filter by Event Type:",
+        options=st.session_state.available_labels,
+        default=st.session_state.available_labels,
+        placeholder="Select event types..."
     )
+    # -----------------------
     
-# --- Column 2: Event Logs ---
-with col2:
-    st.header("Recent Event Logs")
+    logs_placeholder = st.empty()
+
+
+# --- Rendering Function (Moved rendering outside the loop) ---
+
+def render_ui():
+    """Renders the dynamic parts of the UI using data from session state."""
     
-    # Event Log Table Placeholder
-    log_container = st.empty()
+    # A. Render Status
+    status_data = st.session_state.status_data
+    level = status_data.get('status_level', 'IDLE')
+    message = status_data.get('message', 'Awaiting start.')
+            
+    with status_placeholder.container():
+        if level == 'ALERT':
+            st.error(f"🔴 **{level}**\n\n{message}", icon="🚨")
+        elif level == 'OK':
+            st.success(f"🟢 **{level}**\n\n{message}", icon="✅")
+        elif level == 'IDLE':
+            st.info(f"🔵 **{level}**\n\n{message}", icon="💤")
+        else:
+            st.warning(f"🟡 **{level}**\n\n{message}", icon="⚠️")
 
 
-# --- Main Polling Loop for Dynamic Updates ---
-if st.button("Start/Restart System Status Monitoring"):
-    st.session_state['monitoring_active'] = True
+    # B. Render Video Feed
+    with video_col:
+        if st.session_state.monitoring_active:
+            # MJPEG stream from Django
+            st.image(VIDEO_FEED_URL, caption="Real-Time Camera Stream", use_column_width=True)
 
-if 'monitoring_active' not in st.session_state:
-    st.session_state['monitoring_active'] = False
+
+    # C. Render Event Logs
+    logs_df = st.session_state.logs_df
     
-if st.session_state['monitoring_active']:
-    while True:
-        # --- A. Update System Status Banner (Polling every 2 seconds) ---
-        status_data = fetch_system_status()
-        
-        with status_placeholder.container():
-            
-            if status_data.get('status_level') == 'ALERT':
-                st.markdown(f"""
-<div style='background-color: #A30000; color: white; padding: 25px; border-radius: 10px; font-size: 24px; font-weight: bold; text-align: center;'>
-    🚨 💥 {status_data['message']} 💥 🚨
-</div>
-""", unsafe_allow_html=True)
-            
-            elif status_data.get('status_level') in ['OK', 'IDLE']:
-                st.markdown(f"""
-<div style='background-color: #2D4059; color: white; padding: 25px; border-radius: 10px; font-size: 20px; font-weight: bold; text-align: center;'>
-    ✅ {status_data['message']}
-</div>
-""", unsafe_allow_html=True)
-            
-            else: # Error case
-                st.error(f"⚠️ {status_data['message']}")
-
-        # --- B. Update Event Logs (Polling every 5 seconds) ---
-        logs_df = fetch_event_logs()
-        
-        with log_container.container():
-            if not logs_df.empty:
+    # Apply Filtering
+    filtered_df = logs_df
+    if not logs_df.empty and st.session_state.selected_labels:
+        # Filter the DataFrame based on selected labels
+        filtered_df = logs_df[logs_df['label'].isin(st.session_state.selected_labels)]
+    
+    with logs_placeholder.container():
+        if not logs_df.empty:
+            if not filtered_df.empty:
                 st.dataframe(
-                    logs_df,
+                    filtered_df, # Use the filtered DataFrame here
                     column_config={
                         "snapshot_url": st.column_config.LinkColumn(
                             "Snapshot Link", 
@@ -149,16 +183,45 @@ if st.session_state['monitoring_active']:
                             help="Click to open the snapshot image"
                         ),
                         "timestamp": "Timestamp",
+                        # Confidence is displayed using the ProgressColumn
                         "confidence": st.column_config.ProgressColumn("Confidence", format="%.2f", min_value=0, max_value=1),
-                        "label": "Label",
-                        "snapshot_path": None, 
+                        "label": "Event Type",
                     },
                     column_order=['timestamp', 'confidence', 'label', 'snapshot_url'], 
                     height=600,
                     hide_index=True
                 )
             else:
-                st.warning("No events logged yet, or API is unavailable.")
+                st.info("No events match the selected filters.")
+        else:
+            st.warning("No events logged yet, or API is unavailable.")
 
-        # Sleep for the shorter of the two update intervals
-        time.sleep(2)
+# --- Real-Time Monitoring Polling Logic (Non-blocking) ---
+
+if st.session_state.monitoring_active:
+    
+    current_time = time.time()
+    data_changed = False
+    
+    # 1. Conditional Status Fetch
+    if current_time - st.session_state.last_status_fetch >= STATUS_POLL_INTERVAL:
+        st.session_state.status_data = fetch_status()
+        st.session_state.last_status_fetch = current_time
+        data_changed = True
+        
+    # 2. Conditional Logs Fetch (Less frequent)
+    if current_time - st.session_state.last_logs_fetch >= LOGS_POLL_INTERVAL:
+        st.session_state.logs_df = fetch_logs()
+        st.session_state.last_logs_fetch = current_time
+        data_changed = True
+
+    # Render UI if any data was fetched/updated
+    if data_changed:
+        render_ui()
+
+    # Wait for the shortest interval and force a rerun.
+    time.sleep(STATUS_POLL_INTERVAL)
+    st.rerun()
+else:
+    # Initial render when monitoring is inactive
+    render_ui()

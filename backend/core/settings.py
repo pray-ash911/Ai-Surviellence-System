@@ -41,14 +41,21 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'surveillance_app',# this is django app
     # Third-party apps
     'rest_framework',  # For building your APIs
+    'channels',  # For WebSocket support
+    # --- New App Registration ---
+     # --- YOUR APPLICATIONS (Corrected Paths) ---
+    # Since these are inside the 'backend' folder, you need 'backend.' prefix
+    # Registering the full AppConfig class path is the most reliable method for nested apps.
+    'backend.surveillance_app.apps.SurveillanceAppConfig',
+    'backend.security_app.apps.SecurityAppConfig',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -56,12 +63,12 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-ROOT_URLCONF = 'core.urls'
+ROOT_URLCONF = 'backend.core.urls'
 
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [os.path.join(BASE_DIR.parent, 'templates')],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -74,7 +81,17 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'core.wsgi.application'
+WSGI_APPLICATION = 'backend.core.wsgi.application'
+
+# ASGI application for WebSocket support
+ASGI_APPLICATION = 'backend.core.asgi.application'
+
+# Channels configuration
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    },
+}
 
 
 # Database
@@ -145,4 +162,12 @@ USE_I18N = True
 
 # IMPORTANT: Always store datetime objects in the database as time-zone-aware (UTC).
 # Django will handle the conversion between UTC and TIME_ZONE for presentation.
-USE_TZ = True 
+USE_TZ = True
+
+# CORS settings for frontend integration
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+CORS_ALLOW_CREDENTIALS = True
