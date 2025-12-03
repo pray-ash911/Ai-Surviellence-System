@@ -59,10 +59,9 @@ class AreaObservation(models.Model):
         ('NEW', 'New'),
         ('INVESTIGATING', 'Investigating'),
         ('RESOLVED', 'Resolved'),
-        ('FALSE_POSITIVE', 'False Positive'),
+        ('FALSE_POSITIVE', 'False_Positive'),
     )
 
-    timestamp = models.DateTimeField(auto_now_add=True)
     camera = models.ForeignKey(Camera, on_delete=models.CASCADE, related_name='area_observations')
     event_type = models.ForeignKey(EventType, on_delete=models.PROTECT, limit_choices_to={'code__in': ['UOD', 'INTRUSION']})
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='NEW')

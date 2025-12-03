@@ -14,7 +14,7 @@ urlpatterns = [
     # Frontend dashboard
     path('', dashboard_view, name='dashboard'),
 
-    # API dashboard
+    # API dashboards share
     path('api/', dashboard_view, name='api_dashboard'),
 
     # 1. Surveillance API Endpoints (FIXED to match AI worker's /api/surveillance/ path)
